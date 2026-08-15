@@ -1,0 +1,10 @@
+.venv/
+__pycache__/
+*.pyc
+watchdog.yaml
+watchdog.log
+*.egg-info/
+.ga4-watchdog/
+token.json
+*.json.key
+service-account*.json

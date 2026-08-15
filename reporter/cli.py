@@ -1,0 +1,217 @@
+"""growth-reporter CLI: init | doctor | run | test-alert"""
+import argparse
+import os
+import sys
+from pathlib import Path
+
+import yaml
+
+
+def _pick_many(items: list[tuple[str, int]], unit: str, prompt: str) -> list[str]:
+    for i, (name, count) in enumerate(items, 1):
+        print(f"  {i:>2}. {name:<40} {count:>10,} {unit}")
+    raw = input(prompt).strip().lower()
+    if raw in ("", "none"):
+        return []
+    if raw in ("a", "all"):
+        return [name for name, _ in items]
+    chosen = []
+    for part in raw.replace(" ", "").split(","):
+        if part.isdigit() and 1 <= int(part) <= len(items):
+            chosen.append(items[int(part) - 1][0])
+    return chosen
+
+
+def cmd_init(args):
+    """Sign in with Google, pick property + GSC site + events from menus."""
+    from .auth import credential_source, oauth_login
+
+    print("growth-reporter init — sign in, pick your property, done.\n")
+
+    src = credential_source()
+    if src != "none":
+        print(f"✓ Already authenticated via {src}.")
+        if input("  Sign in with a different Google account? [y/N] ").strip().lower() == "y":
+            oauth_login()
+    else:
+        print("A browser window will open — sign in with the Google account that")
+        print("has access to your Analytics property and Search Console.")
+        input("Press Enter to continue... ")
+        try:
+            oauth_login()
+            print("✓ Signed in. Token saved to ~/.growth-reporter/token.json")
+        except RuntimeError as e:
+            print(f"\n✗ {e}")
+            return 1
+
+    from .discover import list_properties, list_gsc_sites, top_hostnames, top_events
+
+    print("\nFetching your GA4 properties...")
+    props = list_properties()
+    if not props:
+        print("✗ This Google account has no GA4 properties.")
+        return 1
+    if len(props) == 1:
+        prop = props[0]
+        print(f"✓ Using your only property: {prop['name']} ({prop['id']})")
+    else:
+        for i, p in enumerate(props, 1):
+            print(f"  {i:>2}. {p['name']:<40} (property {p['id']}, account: {p['account']})")
+        n = input(f"Which property? [1-{len(props)}] ").strip()
+        prop = props[int(n) - 1 if n.isdigit() and 1 <= int(n) <= len(props) else 0]
+
+    print("\nFetching your Search Console sites...")
+    gsc_site = ""
+    try:
+        sites = list_gsc_sites()
+        if sites:
+            for i, s in enumerate(sites, 1):
+                print(f"  {i:>2}. {s}")
+            n = input(f"Which site for the search section? [1-{len(sites)}, blank = skip GSC] ").strip()
+            if n.isdigit() and 1 <= int(n) <= len(sites):
+                gsc_site = sites[int(n) - 1]
+        else:
+            print("  (no Search Console sites on this account — skipping the search section)")
+    except Exception as e:
+        print(f"  (couldn't list Search Console sites: {e} — skipping)")
+
+    print(f"\nTraffic on {prop['name']} in the last 28 days came from these hostnames:")
+    hosts = top_hostnames(prop["id"])
+    picked_hosts = _pick_many(hosts, "sessions",
+                              "Count only these hostnames (e.g. 1,2 · 'all' · blank = no filter): ")
+
+    print("\nMost frequent events in the last 28 days:")
+    events = top_events(prop["id"])
+    picked_events = _pick_many(events, "times",
+                               "Include which events in the report? (e.g. 3,5 · blank = none): ")
+
+    cfg = {
+        "property_id": prop["id"],
+        "site_name": prop["name"],
+        "gsc_site": gsc_site,
+        "events": picked_events,
+    }
+    if picked_hosts:
+        cfg["dimension_filters"] = [{"dimension": "hostName", "values": picked_hosts}]
+
+    out = Path("reporter.yaml")
+    out.write_text(yaml.safe_dump(cfg, sort_keys=False, allow_unicode=True))
+    print(f"\n✓ Wrote {out.resolve()}")
+
+    print("\nDelivery (all optional, via env vars):")
+    print("  REPORTER_SLACK_WEBHOOK    — Slack incoming-webhook URL")
+    print("  REPORTER_TELEGRAM_TOKEN + REPORTER_TELEGRAM_CHAT_ID")
+    print("  REPORTER_WEBHOOK_URL      — any endpoint, receives JSON")
+    print("  LLM_API_KEY + narration.base_url/model in reporter.yaml — AI-written TL;DR")
+    print("\nNext: `growth-reporter run` — put it on a weekly cron (Tuesdays are good;")
+    print("Search Console data needs ~2 days to finalize).")
+
+
+def cmd_doctor(args):
+    from .auth import credential_source
+    ok = True
+    try:
+        from .config import load_config
+        cfg = load_config(args.config)
+        print(f"✓ config: {cfg['_config_path']} (property {cfg['property_id']}, "
+              f"gsc: {cfg['gsc_site'] or 'off'}, {len(cfg['events'])} events)")
+    except Exception as e:
+        print(f"✗ config: {e}")
+        return 1
+
+    src = credential_source()
+    if src == "none":
+        print("✗ auth: no credentials found (run `growth-reporter init`)")
+        return 1
+    print(f"✓ auth source: {src}")
+
+    try:
+        from . import ga4
+        series = ga4.daily_series(cfg, "3daysAgo", "yesterday", ["sessions"])
+        print(f"✓ GA4 API: live query returned {len(series)} days")
+    except Exception as e:
+        print(f"✗ GA4 API: {e}")
+        ok = False
+
+    if cfg["gsc_site"]:
+        try:
+            from . import gsc
+            t = gsc.totals(cfg["gsc_site"], "2026-01-01", "2026-01-07")
+            print(f"✓ GSC API: reachable for {cfg['gsc_site']}")
+        except Exception as e:
+            print(f"✗ GSC API: {e}")
+            ok = False
+
+    ch = cfg["channels"]
+    for label, env_key in [("slack", "slack_webhook_env"),
+                           ("telegram", "telegram_bot_token_env"),
+                           ("webhook", "generic_webhook_env")]:
+        name = ch.get(env_key)
+        configured = bool(name and os.environ.get(name))
+        print(f"{'✓' if configured else '·'} channel {label}: "
+              f"{'configured' if configured else 'not set (optional)'}")
+
+    from .narrate import is_configured
+    n_ok, n_why = is_configured(cfg)
+    print(f"{'✓' if n_ok else '·'} AI TL;DR: {n_why if n_ok else 'off — ' + n_why + ' (rule-based fallback)'}")
+    return 0 if ok else 1
+
+
+def cmd_run(args):
+    from .config import load_config
+    from .compose import (compose_markdown, compose_summary, gather_ga4,
+                          gather_gsc, rule_based_tldr)
+    from .deliver import send_summary, write_report
+    from .narrate import llm_tldr
+
+    cfg = load_config(args.config)
+    print("Gathering GA4 data...", file=sys.stderr)
+    ga = gather_ga4(cfg)
+    print("Gathering Search Console data...", file=sys.stderr)
+    sc = gather_gsc(cfg)
+
+    tldr = llm_tldr(cfg, ga, sc) or rule_based_tldr(ga, sc)
+    md = compose_markdown(cfg, ga, sc, tldr)
+    summary = compose_summary(cfg, ga, sc, tldr)
+
+    if args.dry:
+        print(md)
+        return 0
+
+    path = write_report(md, cfg, ga["windows"]["this"][0])
+    sent = send_summary(summary, cfg, path)
+    print(f"\n[reporter] report written to {path}; summary sent to: {', '.join(sent)}",
+          file=sys.stderr)
+    return 0
+
+
+def cmd_test_alert(args):
+    from .config import load_config
+    from .deliver import send_summary
+    cfg = load_config(args.config)
+    sent = send_summary("growth-reporter test message — delivery works.", cfg)
+    print(f"Sent test message to: {', '.join(sent) or 'nowhere (no channels configured)'}")
+    return 0
+
+
+def main():
+    p = argparse.ArgumentParser(
+        prog="growth-reporter",
+        description="Weekly GA4 + Search Console growth report with an AI-written TL;DR.")
+    p.add_argument("--config", "-c", help="path to config YAML", default=None)
+    sub = p.add_subparsers(dest="command", required=True)
+    sub.add_parser("init", help="interactive setup wizard (browser sign-in)")
+    sub.add_parser("doctor", help="diagnose config, auth, APIs, channels")
+    runp = sub.add_parser("run", help="build and deliver this week's report")
+    runp.add_argument("--dry", action="store_true",
+                      help="print the markdown report, deliver nothing")
+    sub.add_parser("test-alert", help="send a test message to configured channels")
+
+    args = p.parse_args()
+    cmd = {"init": cmd_init, "doctor": cmd_doctor,
+           "run": cmd_run, "test-alert": cmd_test_alert}[args.command]
+    sys.exit(cmd(args) or 0)
+
+
+if __name__ == "__main__":
+    main()

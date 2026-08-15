@@ -1,0 +1,44 @@
+# growth-reporter config. Copy to reporter.yaml and edit — or better, run
+# `growth-reporter init` which builds this file for you from menus.
+# Secrets (webhooks, API keys) go in env vars, never in this file.
+
+property_id: "123456789"          # GA4 Admin → Property settings → Property ID
+site_name: Example.com            # display name for the report header
+
+# Search Console (optional — blank gsc_site skips the search section)
+gsc_site: "sc-domain:example.com" # or "https://www.example.com/"
+gsc_url_contains: ""              # e.g. "www.example.com" — filters out spam
+                                  # subdomains on sc-domain properties
+
+events: [sign_up, purchase]       # key GA4 events to include
+
+# Only count GA4 traffic matching ALL of these (optional)
+dimension_filters:
+  - dimension: hostName
+    values: [example.com, www.example.com]
+
+top_n: 5                          # winners/losers/pages per list
+min_mover_clicks: 3               # ignore query movers below this many weekly clicks
+report_dir: reports               # weekly .md reports land here
+
+channels:
+  stdout: true
+  slack_webhook_env: REPORTER_SLACK_WEBHOOK
+  telegram_bot_token_env: REPORTER_TELEGRAM_TOKEN
+  telegram_chat_id_env: REPORTER_TELEGRAM_CHAT_ID
+  generic_webhook_env: REPORTER_WEBHOOK_URL
+
+# AI-written TL;DR — works with ANY OpenAI-compatible API. Examples:
+#   OpenAI:     base_url: https://api.openai.com/v1        model: gpt-4o-mini
+#   Anthropic:  base_url: https://api.anthropic.com/v1     model: claude-opus-5
+#   OpenRouter: base_url: https://openrouter.ai/api/v1     model: anthropic/claude-sonnet-5
+#   Ollama:     base_url: http://localhost:11434/v1        model: llama3.1        (no key)
+#   LM Studio:  base_url: http://localhost:1234/v1         model: (loaded model)  (no key)
+# Blank base_url = a solid rule-based TL;DR instead. Key goes in the env var
+# named by api_key_env.
+narration:
+  enabled: true
+  base_url: ""
+  model: ""
+  api_key_env: LLM_API_KEY
+  extra_context: ""               # e.g. "B2B SaaS; signups are the KPI"

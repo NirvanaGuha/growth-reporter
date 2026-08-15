@@ -1,0 +1,27 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "growth-reporter"
+version = "0.1.0"
+description = "Weekly GA4 + Search Console growth report with an AI-written TL;DR — delivered to Slack/Telegram, no dashboard-checking required."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [{ name = "Nirvana Guha" }]
+dependencies = [
+    "google-analytics-data>=0.18",
+    "google-analytics-admin>=0.22",
+    "google-api-python-client>=2.100",
+    "google-auth>=2.23",
+    "google-auth-oauthlib>=1.1",
+    "pyyaml>=6.0",
+    "requests>=2.31",
+]
+
+[project.scripts]
+growth-reporter = "reporter.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["reporter*"]
