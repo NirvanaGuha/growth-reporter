@@ -5,19 +5,19 @@
 Every Tuesday it pulls the last complete week from Google Analytics 4 and Search Console, compares it to the week before (and a 4-week average), and delivers a report: traffic by channel, your key events, search winners and losers — with a TL;DR written by an AI model of your choice, or a solid rule-based summary with no AI at all.
 
 ```
-# Weekly Growth Report — PushEngage
+# Weekly Growth Report — Example.com
 **Week of Aug 3 – Aug 9, 2026**
 
 ## TL;DR
 Sessions ▲ 7.2% week-over-week (4,043 vs 3,772). Biggest event move:
-signup_success ▲ 75.0%. Search clicks ▼ 0.2%.
+sign_up ▲ 75.0%. Search clicks ▼ 0.2%.
 
 | Metric   | This week | Last week | Δ      | 4-wk avg |
 |----------|-----------|-----------|--------|----------|
 | Sessions | 4,043     | 3,772     | ▲ 7.2% | 3,872    |
 ...
-### Winning queries          ### Losing queries
-| push engage  10 → 16 |     | pushengage  61 → 49 |
+### Winning queries              ### Losing queries
+| cart abandonment  10 → 16 |    | abandoned cart app  61 → 49 |
 ```
 
 The full markdown report is saved to a `reports/` folder (or committed straight into your repo on GitHub Actions); a short summary goes to Slack or Telegram.
