@@ -13,27 +13,70 @@ from growthkit.menus import pick_many as _pick_many
 
 def cmd_init(args):
     """Sign in with Google, pick property + GSC site + events from menus."""
-    from .services import AUTH
+    from .services import AUTH, get_ga, get_sc
 
     print("growth-reporter init — sign in, pick your property, done.\n")
 
-    src = AUTH.credential_source()
-    if src != "none":
-        print(f"✓ Already authenticated via {src}.")
-        if input("  Sign in with a different Google account? [y/N] ").strip().lower() == "y":
-            AUTH.oauth_login()
-    else:
-        print("A browser window will open — sign in with the Google account that")
-        print("has access to your Analytics property and Search Console.")
-        input("Press Enter to continue... ")
-        try:
-            AUTH.oauth_login()
-            print(f"✓ Signed in. Token saved to {AUTH.token_path}")
-        except RuntimeError as e:
-            print(f"\n✗ {e}")
-            return 1
+    print("How do you want to connect to Google?")
+    print("  1. Sign in with Google           (tokens stay on this machine)")
+    print("  2. Connect via Composio          (no Google Cloud setup at all —")
+    print("     free composio.dev account; tokens held by Composio)")
+    choice = input("Choice [1]: ").strip() or "1"
+    backend = "composio" if choice == "2" else "native"
 
-    from .services import GA, SC
+    if backend == "composio":
+        import os
+        from growthkit.google.composio_backend import (GA_TOOLKIT, GSC_TOOLKIT,
+                                                       ComposioClient)
+        if not os.environ.get("COMPOSIO_API_KEY"):
+            print("\n1. Create a free account at https://app.composio.dev")
+            print("2. Settings → API keys → create one")
+            key = input("Paste your Composio API key: ").strip()
+            if not key:
+                print("✗ No key — aborting.")
+                return 1
+            os.environ["COMPOSIO_API_KEY"] = key
+            print("   (add `export COMPOSIO_API_KEY=...` to your ~/.zshrc to persist it)")
+        client = ComposioClient()
+        ok, why = client.available()
+        if not ok:
+            print(f"✗ {why}")
+            return 1
+        for toolkit, label in ((GA_TOOLKIT, "Google Analytics"),
+                               (GSC_TOOLKIT, "Search Console")):
+            if client.has_connection(toolkit):
+                print(f"✓ {label} already connected via Composio.")
+                continue
+            print(f"\nConnecting {label} through Composio...")
+            try:
+                client.connect(toolkit)
+                print(f"✓ {label} connected.")
+            except Exception as e:
+                print(f"✗ {label} connection failed: {e}")
+                if toolkit == GA_TOOLKIT:
+                    return 1
+                print("  (continuing without Search Console — GSC section will be skipped)")
+    else:
+        src = AUTH.credential_source()
+        if src != "none":
+            print(f"✓ Already authenticated via {src}.")
+            if input("  Sign in with a different Google account? [y/N] ").strip().lower() == "y":
+                AUTH.oauth_login()
+        else:
+            print("A browser window will open — sign in with the Google account that")
+            print("has access to your Analytics property and Search Console.")
+            input("Press Enter to continue... ")
+            try:
+                AUTH.oauth_login()
+                print(f"✓ Signed in. Token saved to {AUTH.token_path}")
+            except RuntimeError as e:
+                print(f"\n✗ {e}")
+                print("\nNo OAuth client available? Rerun init and pick option 2 (Composio).")
+                return 1
+
+    _bcfg = {"google_backend": backend,
+             "composio": {"user_id": "default", "api_key_env": "COMPOSIO_API_KEY"}}
+    GA, SC = get_ga(_bcfg), get_sc(_bcfg)
 
     print("\nFetching your GA4 properties...")
     props = GA.list_properties()
@@ -76,6 +119,7 @@ def cmd_init(args):
 
     cfg = {
         "property_id": prop["id"],
+        "google_backend": backend,
         "site_name": prop["name"],
         "gsc_site": gsc_site,
         "events": picked_events,
@@ -97,7 +141,7 @@ def cmd_init(args):
 
 
 def cmd_doctor(args):
-    from .services import AUTH, GA, SC
+    from .services import backend_doctor_line, get_ga, get_sc
     ok = True
     try:
         from .config import load_config
@@ -108,15 +152,14 @@ def cmd_doctor(args):
         print(f"✗ config: {e}")
         return 1
 
-    src = AUTH.credential_source()
-    if src == "none":
-        print("✗ auth: no credentials found (run `growth-reporter init`)")
+    line = backend_doctor_line(cfg)
+    print(line)
+    if line.startswith("✗"):
         return 1
-    print(f"✓ auth source: {src}")
 
     try:
-        series = GA.daily_series(cfg["property_id"], "3daysAgo", "yesterday",
-                                 ["sessions"], filters=cfg["dimension_filters"])
+        series = get_ga(cfg).daily_series(cfg["property_id"], "3daysAgo", "yesterday",
+                                          ["sessions"], filters=cfg["dimension_filters"])
         print(f"✓ GA4 API: live query returned {len(series)} days")
     except Exception as e:
         print(f"✗ GA4 API: {e}")
@@ -124,7 +167,7 @@ def cmd_doctor(args):
 
     if cfg["gsc_site"]:
         try:
-            SC.totals(cfg["gsc_site"], "2026-01-01", "2026-01-07")
+            get_sc(cfg).totals(cfg["gsc_site"], "2026-01-01", "2026-01-07")
             print(f"✓ GSC API: reachable for {cfg['gsc_site']}")
         except Exception as e:
             print(f"✗ GSC API: {e}")

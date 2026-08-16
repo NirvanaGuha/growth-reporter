@@ -7,6 +7,8 @@ APP = "growth-reporter"
 
 DEFAULTS = {
     "property_id": None,            # required — GA4 property
+    "google_backend": "native",     # "native" (sign in with Google) or "composio"
+    "composio": {"user_id": "default", "api_key_env": "COMPOSIO_API_KEY"},
     "gsc_site": "",                 # e.g. "sc-domain:example.com" or "https://www.example.com/"; blank = skip GSC section
     "gsc_url_contains": "",         # only count search data for pages containing this (filters spam subdomains)
     "site_name": "",                # display name for the report header

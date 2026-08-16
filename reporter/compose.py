@@ -54,8 +54,8 @@ def _sum_series(series: dict[str, dict[str, int]], metric: str) -> int:
 
 
 def gather_ga4(cfg: dict) -> dict:
-    from .services import GA
-    from growthkit.google.ga4 import event_filter
+    from .services import get_ga
+    GA = get_ga(cfg)
     w = windows()
     out = {"windows": w, "metrics": {}, "events": {}, "channels": {}}
 
@@ -79,7 +79,7 @@ def gather_ga4(cfg: dict) -> dict:
     for event in cfg.get("events", []):
         ev = GA.daily_series(cfg["property_id"], full_start, w["this"][1],
                              ["eventCount"], filters=cfg["dimension_filters"],
-                             extra_filter=event_filter(event))
+                             event_name=event)
         out["events"][event] = {
             "this": window_sum(ev, "eventCount", w["this"]),
             "prev": window_sum(ev, "eventCount", w["prev"]),
@@ -94,8 +94,8 @@ def gather_ga4(cfg: dict) -> dict:
 
 
 def _channels(cfg: dict, start: str, end: str) -> dict[str, int]:
-    from .services import GA
-    return GA.dim_totals(cfg["property_id"], start, end,
+    from .services import get_ga
+    return get_ga(cfg).dim_totals(cfg["property_id"], start, end,
                          "sessionDefaultChannelGroup", "sessions",
                          filters=cfg["dimension_filters"], limit=15)
 
@@ -106,7 +106,8 @@ def gather_gsc(cfg: dict) -> dict | None:
     site = cfg.get("gsc_site")
     if not site:
         return None
-    from .services import SC
+    from .services import get_sc
+    SC = get_sc(cfg)
     from growthkit.google.gsc import movers
     w = windows()
     uc = cfg.get("gsc_url_contains") or None
