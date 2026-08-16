@@ -8,7 +8,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from reporter.compose import (compose_markdown, compose_summary, fmt_delta,
                               last_complete_week, pct_change, rule_based_tldr,
                               windows)
-from reporter.gsc import movers
+from growthkit.google.gsc import movers
 
 CFG = {"property_id": "123", "site_name": "Example.com", "events": ["sign_up"],
        "top_n": 5, "min_mover_clicks": 3}

@@ -11,11 +11,7 @@ requires-python = ">=3.10"
 license = { text = "MIT" }
 authors = [{ name = "Nirvana Guha" }]
 dependencies = [
-    "google-analytics-data>=0.18",
-    "google-analytics-admin>=0.22",
-    "google-api-python-client>=2.100",
-    "google-auth>=2.23",
-    "google-auth-oauthlib>=1.1",
+    "growthkit[google] @ git+https://github.com/NirvanaGuha/growthkit",
     "pyyaml>=6.0",
     "requests>=2.31",
 ]

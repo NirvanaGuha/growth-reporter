@@ -54,14 +54,16 @@ def _sum_series(series: dict[str, dict[str, int]], metric: str) -> int:
 
 
 def gather_ga4(cfg: dict) -> dict:
-    from . import ga4
+    from .services import GA
+    from growthkit.google.ga4 import event_filter
     w = windows()
     out = {"windows": w, "metrics": {}, "events": {}, "channels": {}}
 
     # One 5-week pull covers this week, prev week, and the 4-week average.
     full_start = w["four_weeks"][0]
-    series = ga4.daily_series(cfg, full_start, w["this"][1],
-                              ["sessions", "totalUsers"])
+    series = GA.daily_series(cfg["property_id"], full_start, w["this"][1],
+                             ["sessions", "totalUsers"],
+                             filters=cfg["dimension_filters"])
 
     def window_sum(series_, metric, win):
         lo, hi = win[0].replace("-", ""), win[1].replace("-", "")
@@ -75,8 +77,9 @@ def gather_ga4(cfg: dict) -> dict:
         }
 
     for event in cfg.get("events", []):
-        ev = ga4.daily_series(cfg, full_start, w["this"][1], ["eventCount"],
-                              extra_filter=ga4.event_filter(event))
+        ev = GA.daily_series(cfg["property_id"], full_start, w["this"][1],
+                             ["eventCount"], filters=cfg["dimension_filters"],
+                             extra_filter=event_filter(event))
         out["events"][event] = {
             "this": window_sum(ev, "eventCount", w["this"]),
             "prev": window_sum(ev, "eventCount", w["prev"]),
@@ -91,23 +94,10 @@ def gather_ga4(cfg: dict) -> dict:
 
 
 def _channels(cfg: dict, start: str, end: str) -> dict[str, int]:
-    from . import ga4
-    from google.analytics.data_v1beta.types import (
-        DateRange, Dimension, Metric, OrderBy, RunReportRequest,
-    )
-    req = RunReportRequest(
-        property=f"properties/{cfg['property_id']}",
-        date_ranges=[DateRange(start_date=start, end_date=end)],
-        dimensions=[Dimension(name="sessionDefaultChannelGroup")],
-        metrics=[Metric(name="sessions")],
-        dimension_filter=ga4.build_filter(cfg),
-        order_bys=[OrderBy(metric=OrderBy.MetricOrderBy(metric_name="sessions"),
-                           desc=True)],
-        limit=15,
-    )
-    resp = ga4.client().run_report(req)
-    return {r.dimension_values[0].value: int(float(r.metric_values[0].value))
-            for r in resp.rows}
+    from .services import GA
+    return GA.dim_totals(cfg["property_id"], start, end,
+                         "sessionDefaultChannelGroup", "sessions",
+                         filters=cfg["dimension_filters"], limit=15)
 
 
 # ── GSC gathering ────────────────────────────────────────────────────────
@@ -116,19 +106,22 @@ def gather_gsc(cfg: dict) -> dict | None:
     site = cfg.get("gsc_site")
     if not site:
         return None
-    from . import gsc
+    from .services import SC
+    from growthkit.google.gsc import movers
     w = windows()
-    this_q = gsc.by_dimension(site, *w["this"], "query")
-    prev_q = gsc.by_dimension(site, *w["prev"], "query")
-    gainers, losers = gsc.movers(this_q, prev_q, cfg["top_n"],
-                                 cfg["min_mover_clicks"])
+    uc = cfg.get("gsc_url_contains") or None
+    this_q = SC.by_dimension(site, *w["this"], "query", url_contains=uc)
+    prev_q = SC.by_dimension(site, *w["prev"], "query", url_contains=uc)
+    gainers, losers = movers(this_q, prev_q, cfg["top_n"],
+                             cfg["min_mover_clicks"])
     return {
-        "totals_this": gsc.totals(site, *w["this"]),
-        "totals_prev": gsc.totals(site, *w["prev"]),
+        "totals_this": SC.totals(site, *w["this"], url_contains=uc),
+        "totals_prev": SC.totals(site, *w["prev"], url_contains=uc),
         "gainers": gainers,
         "losers": losers,
-        "top_pages": dict(list(gsc.by_dimension(
-            site, *w["this"], "page", cfg["top_n"]).items())[:cfg["top_n"]]),
+        "top_pages": dict(list(SC.by_dimension(
+            site, *w["this"], "page", cfg["top_n"],
+            url_contains=uc).items())[:cfg["top_n"]]),
     }
 
 

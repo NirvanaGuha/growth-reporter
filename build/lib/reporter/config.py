@@ -1,17 +1,14 @@
-"""Config loading and defaults. Config lives in YAML; secrets live in env vars."""
+"""Reporter config: growthkit loader + this app's defaults."""
 from pathlib import Path
 
-import yaml
+from growthkit import config as kit_config
 
-DEFAULT_CONFIG_PATHS = [
-    Path("reporter.yaml"),
-    Path("config.yaml"),
-    Path.home() / ".growth-reporter" / "config.yaml",
-]
+APP = "growth-reporter"
 
 DEFAULTS = {
     "property_id": None,            # required — GA4 property
     "gsc_site": "",                 # e.g. "sc-domain:example.com" or "https://www.example.com/"; blank = skip GSC section
+    "gsc_url_contains": "",         # only count search data for pages containing this (filters spam subdomains)
     "site_name": "",                # display name for the report header
     "events": [],                   # key GA4 events to include
     "dimension_filters": [],        # same shape as ga4-watchdog (hostname filters etc.)
@@ -35,36 +32,11 @@ DEFAULTS = {
 }
 
 
-def _merge(base: dict, override: dict) -> dict:
-    out = dict(base)
-    for k, v in (override or {}).items():
-        if isinstance(v, dict) and isinstance(out.get(k), dict):
-            out[k] = _merge(out[k], v)
-        else:
-            out[k] = v
-    return out
-
-
-def find_config_path(explicit: str | None = None) -> Path | None:
-    if explicit:
-        p = Path(explicit).expanduser()
-        return p if p.exists() else None
-    for p in DEFAULT_CONFIG_PATHS:
-        if p.expanduser().exists():
-            return p.expanduser()
-    return None
+# Back-compat: this app searched reporter.yaml before growthkit existed.
+_LEGACY = Path("reporter.yaml")
 
 
 def load_config(explicit: str | None = None) -> dict:
-    path = find_config_path(explicit)
-    if path is None:
-        raise FileNotFoundError(
-            "No config found. Run `growth-reporter init` to create one "
-            f"(searched: {', '.join(str(p) for p in DEFAULT_CONFIG_PATHS)})."
-        )
-    with open(path) as f:
-        cfg = _merge(DEFAULTS, yaml.safe_load(f) or {})
-    if not cfg.get("property_id"):
-        raise ValueError(f"`property_id` missing in {path}.")
-    cfg["_config_path"] = str(path)
-    return cfg
+    if explicit is None and _LEGACY.exists():
+        explicit = str(_LEGACY)
+    return kit_config.load(APP, DEFAULTS, required=("property_id",), explicit=explicit)

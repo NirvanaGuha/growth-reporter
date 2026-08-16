@@ -6,48 +6,37 @@ from pathlib import Path
 
 import yaml
 
-
-def _pick_many(items: list[tuple[str, int]], unit: str, prompt: str) -> list[str]:
-    for i, (name, count) in enumerate(items, 1):
-        print(f"  {i:>2}. {name:<40} {count:>10,} {unit}")
-    raw = input(prompt).strip().lower()
-    if raw in ("", "none"):
-        return []
-    if raw in ("a", "all"):
-        return [name for name, _ in items]
-    chosen = []
-    for part in raw.replace(" ", "").split(","):
-        if part.isdigit() and 1 <= int(part) <= len(items):
-            chosen.append(items[int(part) - 1][0])
-    return chosen
+from growthkit import channels as kit_channels
+from growthkit import llm as kit_llm
+from growthkit.menus import pick_many as _pick_many
 
 
 def cmd_init(args):
     """Sign in with Google, pick property + GSC site + events from menus."""
-    from .auth import credential_source, oauth_login
+    from .services import AUTH
 
     print("growth-reporter init — sign in, pick your property, done.\n")
 
-    src = credential_source()
+    src = AUTH.credential_source()
     if src != "none":
         print(f"✓ Already authenticated via {src}.")
         if input("  Sign in with a different Google account? [y/N] ").strip().lower() == "y":
-            oauth_login()
+            AUTH.oauth_login()
     else:
         print("A browser window will open — sign in with the Google account that")
         print("has access to your Analytics property and Search Console.")
         input("Press Enter to continue... ")
         try:
-            oauth_login()
-            print("✓ Signed in. Token saved to ~/.growth-reporter/token.json")
+            AUTH.oauth_login()
+            print(f"✓ Signed in. Token saved to {AUTH.token_path}")
         except RuntimeError as e:
             print(f"\n✗ {e}")
             return 1
 
-    from .discover import list_properties, list_gsc_sites, top_hostnames, top_events
+    from .services import GA, SC
 
     print("\nFetching your GA4 properties...")
-    props = list_properties()
+    props = GA.list_properties()
     if not props:
         print("✗ This Google account has no GA4 properties.")
         return 1
@@ -63,7 +52,7 @@ def cmd_init(args):
     print("\nFetching your Search Console sites...")
     gsc_site = ""
     try:
-        sites = list_gsc_sites()
+        sites = SC.list_sites()
         if sites:
             for i, s in enumerate(sites, 1):
                 print(f"  {i:>2}. {s}")
@@ -76,12 +65,12 @@ def cmd_init(args):
         print(f"  (couldn't list Search Console sites: {e} — skipping)")
 
     print(f"\nTraffic on {prop['name']} in the last 28 days came from these hostnames:")
-    hosts = top_hostnames(prop["id"])
+    hosts = GA.top(prop["id"], "hostName", "sessions", limit=10)
     picked_hosts = _pick_many(hosts, "sessions",
                               "Count only these hostnames (e.g. 1,2 · 'all' · blank = no filter): ")
 
     print("\nMost frequent events in the last 28 days:")
-    events = top_events(prop["id"])
+    events = GA.top(prop["id"], "eventName", "eventCount", limit=20)
     picked_events = _pick_many(events, "times",
                                "Include which events in the report? (e.g. 3,5 · blank = none): ")
 
@@ -108,7 +97,7 @@ def cmd_init(args):
 
 
 def cmd_doctor(args):
-    from .auth import credential_source
+    from .services import AUTH, GA, SC
     ok = True
     try:
         from .config import load_config
@@ -119,15 +108,15 @@ def cmd_doctor(args):
         print(f"✗ config: {e}")
         return 1
 
-    src = credential_source()
+    src = AUTH.credential_source()
     if src == "none":
         print("✗ auth: no credentials found (run `growth-reporter init`)")
         return 1
     print(f"✓ auth source: {src}")
 
     try:
-        from . import ga4
-        series = ga4.daily_series(cfg, "3daysAgo", "yesterday", ["sessions"])
+        series = GA.daily_series(cfg["property_id"], "3daysAgo", "yesterday",
+                                 ["sessions"], filters=cfg["dimension_filters"])
         print(f"✓ GA4 API: live query returned {len(series)} days")
     except Exception as e:
         print(f"✗ GA4 API: {e}")
@@ -135,22 +124,14 @@ def cmd_doctor(args):
 
     if cfg["gsc_site"]:
         try:
-            from . import gsc
-            t = gsc.totals(cfg["gsc_site"], "2026-01-01", "2026-01-07")
+            SC.totals(cfg["gsc_site"], "2026-01-01", "2026-01-07")
             print(f"✓ GSC API: reachable for {cfg['gsc_site']}")
         except Exception as e:
             print(f"✗ GSC API: {e}")
             ok = False
 
-    ch = cfg["channels"]
-    for label, env_key in [("slack", "slack_webhook_env"),
-                           ("telegram", "telegram_bot_token_env"),
-                           ("webhook", "generic_webhook_env")]:
-        name = ch.get(env_key)
-        configured = bool(name and os.environ.get(name))
-        print(f"{'✓' if configured else '·'} channel {label}: "
-              f"{'configured' if configured else 'not set (optional)'}")
-
+    for line in kit_channels.doctor_lines(cfg["channels"]):
+        print(line)
     from .narrate import is_configured
     n_ok, n_why = is_configured(cfg)
     print(f"{'✓' if n_ok else '·'} AI TL;DR: {n_why if n_ok else 'off — ' + n_why + ' (rule-based fallback)'}")

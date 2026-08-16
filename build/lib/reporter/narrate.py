@@ -1,18 +1,15 @@
 """Optional LLM TL;DR via any OpenAI-compatible endpoint. Falls back to the
 rule-based TL;DR in compose.py — the report never ships without a summary."""
 import json
-import os
 
-import requests
+from growthkit import llm
 
 
 def is_configured(cfg: dict) -> tuple[bool, str]:
     n = cfg["narration"]
     if not n.get("enabled"):
         return False, "disabled in config"
-    if not n.get("base_url") or not n.get("model"):
-        return False, "narration.base_url / narration.model not set"
-    return True, f"{n['model']} @ {n['base_url']}"
+    return llm.is_configured(n)
 
 
 def llm_tldr(cfg: dict, ga: dict, sc: dict | None) -> str | None:
@@ -52,22 +49,4 @@ def llm_tldr(cfg: dict, ga: dict, sc: dict | None) -> str | None:
         "data you weren't given."
     )
 
-    headers = {"Content-Type": "application/json"}
-    key = os.environ.get(n.get("api_key_env") or "LLM_API_KEY")
-    if key:
-        headers["Authorization"] = f"Bearer {key}"
-
-    try:
-        r = requests.post(
-            n["base_url"].rstrip("/") + "/chat/completions",
-            headers=headers,
-            json={"model": n["model"],
-                  "messages": [{"role": "user", "content": prompt}],
-                  "max_tokens": 600},
-            timeout=120,
-        )
-        r.raise_for_status()
-        text = r.json()["choices"][0]["message"]["content"]
-        return text.strip() or None
-    except Exception:
-        return None
+    return llm.try_chat(n, prompt, max_tokens=600)
