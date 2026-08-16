@@ -20,7 +20,9 @@ jobs:
           python-version: "3.12"
 
       - name: Install
-        run: uv pip install --system .
+        run: |
+          uv venv .venv
+          uv pip install --python .venv/bin/python .
 
       - name: Build and deliver report
         env:
@@ -29,7 +31,7 @@ jobs:
           REPORTER_TELEGRAM_TOKEN: ${{ secrets.REPORTER_TELEGRAM_TOKEN }}
           REPORTER_TELEGRAM_CHAT_ID: ${{ secrets.REPORTER_TELEGRAM_CHAT_ID }}
           LLM_API_KEY: ${{ secrets.LLM_API_KEY }}
-        run: growth-reporter run
+        run: .venv/bin/growth-reporter run
 
       - name: Commit the report into the repo
         run: |
